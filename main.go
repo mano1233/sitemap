@@ -19,22 +19,10 @@ func main() {
 	maxDepth := flag.Int("maxDepth", 4, "the amount of pages to search in from the root url")
 	flag.Parse()
 	// Transfer response.Body (which is an io.ReadCloser) to an io.Reader variable.
-	body, err := getHtml(*url)
-	if err != nil {
-		fmt.Println(err)
-	}
-	fmt.Printf("%d\n", *maxDepth)
-	// To test if the transfer worked, let's copy from our reader to stdout (os.Stdout).
-	// In a practical scenario, you might use the reader for something else.
-	//_, err = io.Copy(os.Stdout, reader)
-	// if err != nil {
-	// 	fmt.Println("Error reading response body:", err)
-	// }
-	links, err := gatherLinks(body, *url)
-	if err != nil {
-		fmt.Println(err)
-	}
-	fmt.Printf("%#v", links)
+	wg.Add(1)
+	go mapSite(*url, *maxDepth)
+	wg.Wait()
+	fmt.Printf("%#v", linkMap)
 	// fmt.Printf("%#v", link)
 
 }
@@ -91,7 +79,6 @@ func gatherLinks(body io.ReadCloser, domain string) ([]link.Link, error) {
 	}
 	for _, link := range links {
 		if strings.HasPrefix(link.Href, "/") {
-			fmt.Printf("%s\n", link.Href)
 			link.Href = fmt.Sprintf("%s%s", domain, link.Href)
 			domainUrls = append(domainUrls, link)
 		} else if strings.HasPrefix(link.Href, domain) {
