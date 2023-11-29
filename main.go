@@ -27,7 +27,7 @@ type URL struct {
 const xmlns = "http://www.sitemaps.org/schemas/sitemap/0.9"
 
 var linkMap = make(map[string]int)
-var wg sync.WaitGroup
+
 var mu sync.Mutex
 
 func main() {
@@ -35,11 +35,12 @@ func main() {
 		Xmlns: xmlns,
 	}
 	url := flag.String("url", "", "the root url to begin the site mapping from (only urls of this domain will be searched)")
-	maxDepth := flag.Int("maxDepth", 4, "the amount of pages to search in from the root url")
+	maxDepth := flag.Int("depth", 4, "the amount of pages to search in from the root url")
 	flag.Parse()
+	var wg sync.WaitGroup
 	// Transfer response.Body (which is an io.ReadCloser) to an io.Reader variable.
 	wg.Add(1)
-	go mapSite(*url, *maxDepth)
+	go mapSite(*url, *url, *maxDepth, &wg)
 	wg.Wait()
 	for link, _ := range linkMap {
 		urlSet.URLs = append(urlSet.URLs, URL{Loc: link})
@@ -59,31 +60,35 @@ func main() {
 
 }
 
-func mapSite(url string, maxDepth int) {
+func mapSite(url, base string, maxDepth int, wg *sync.WaitGroup) {
+	defer wg.Done()
 	if maxDepth == 0 {
 		return
 	}
-	maxDepth--
+	maxDepth = maxDepth - 1
 	body, err := getHtml(url)
 	if err != nil {
 		fmt.Println(err)
 	}
-	links, err := gatherLinks(body, url)
+	links, err := gatherLinks(body, base)
 	if err != nil {
 		fmt.Println(err)
 	}
 	for _, link := range links {
-		mu.Lock()
-		linkMap[link]++
-		if linkMap[link] < 1 {
-			mu.Unlock()
-			wg.Add(1)
-			go mapSite(link, maxDepth)
-		} else {
-			mu.Unlock()
+		if link != "" {
+			mu.Lock()
+			linkMap[link] = linkMap[link] + 1
+			if linkMap[link] == 1 {
+				mu.Unlock()
+				wg.Add(1)
+				go mapSite(link, base, maxDepth, wg)
+			} else {
+				mu.Unlock()
+			}
+
 		}
 	}
-	wg.Done()
+	fmt.Printf("%#v\n", links)
 }
 
 func getHtml(url string) (io.ReadCloser, error) {
@@ -103,16 +108,15 @@ func getHtml(url string) (io.ReadCloser, error) {
 
 func gatherLinks(body io.ReadCloser, domain string) ([]string, error) {
 	defer body.Close()
-	links := hrefs(body, domain)
-	domainUrls := make([]string, 4)
+	links, _ := link.Parse(body)
+	domainUrls := make([]string, 1)
 	for _, link := range links {
-		if strings.HasPrefix(link, "/") {
-			link = fmt.Sprintf("%s%s", domain, link)
-			domainUrls = append(domainUrls, link)
-		} else if strings.HasPrefix(link, domain) {
+		if link.Href != "" && strings.HasPrefix(link.Href, "/") {
+			link.Href = fmt.Sprintf("%s%s", domain, link.Href)
+			domainUrls = append(domainUrls, link.Href)
+		} else if link.Href != "" && strings.HasPrefix(link.Href, domain) {
 			fmt.Printf("%s\n", link)
-
-			domainUrls = append(domainUrls, link)
+			domainUrls = append(domainUrls, link.Href)
 		}
 	}
 	return domainUrls, nil
